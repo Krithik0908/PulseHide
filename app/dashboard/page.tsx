@@ -11,6 +11,9 @@ import {
   Tooltip,
   ReferenceLine,
   CartesianGrid,
+  LineChart,
+  Line,
+  Legend,
 } from 'recharts';
 import { Activity, Play, RefreshCw, ShieldAlert, ShieldCheck } from 'lucide-react';
 
@@ -21,6 +24,12 @@ interface BeaconEvent {
 
 type HostCategory = 'compromised' | 'benignRegular' | 'benignBursty' | 'plainBenign';
 
+interface TimelinePoint {
+  timestampMs: number;
+  hostId: string;
+  score: number;
+}
+
 interface ScenarioResponse {
   _id: string;
   scenarioSeed: number;
@@ -29,6 +38,8 @@ interface ScenarioResponse {
   totalDurationMs: number;
   hostCategories: Record<string, HostCategory>;
   events: BeaconEvent[];
+  phase1Timeline: TimelinePoint[];
+  phase2Timeline: TimelinePoint[];
   detectionResults: {
     hostId: string;
     phase1Score: number;
@@ -121,6 +132,50 @@ export default function DashboardPage() {
 
   const phase1EndMs = data?.phase1DurationMs ?? 3_600_000;
   const totalDurationMs = data?.totalDurationMs ?? 7_200_000;
+
+  // ── Confidence Timeline: average phase1 & phase2 scores across compromised hosts only ──
+  // We group each timeline by timestampMs and compute the mean score across
+  // hosts whose category is "compromised", producing one data point per bucket.
+  const confidenceChartData: { timestampMs: number; phase1Avg: number | null; phase2Avg: number | null }[] = [];
+
+  if (data?.phase1Timeline && data?.phase2Timeline && data?.hostCategories) {
+    // Build per-timestamp average for phase1 (compromised hosts only)
+    const p1ByTs = new Map<number, number[]>();
+    for (const pt of data.phase1Timeline) {
+      if (data.hostCategories[pt.hostId] === 'compromised') {
+        if (!p1ByTs.has(pt.timestampMs)) p1ByTs.set(pt.timestampMs, []);
+        p1ByTs.get(pt.timestampMs)!.push(pt.score);
+      }
+    }
+
+    // Build per-timestamp average for phase2 (compromised hosts only)
+    const p2ByTs = new Map<number, number[]>();
+    for (const pt of data.phase2Timeline) {
+      if (data.hostCategories[pt.hostId] === 'compromised') {
+        if (!p2ByTs.has(pt.timestampMs)) p2ByTs.set(pt.timestampMs, []);
+        p2ByTs.get(pt.timestampMs)!.push(pt.score);
+      }
+    }
+
+    // Merge all distinct timestamps from both timelines, sorted ascending
+    const allTs = Array.from(
+      new Set([...p1ByTs.keys(), ...p2ByTs.keys()])
+    ).sort((a, b) => a - b);
+
+    for (const ts of allTs) {
+      const p1Vals = p1ByTs.get(ts);
+      const p2Vals = p2ByTs.get(ts);
+      confidenceChartData.push({
+        timestampMs: ts,
+        phase1Avg: p1Vals && p1Vals.length > 0
+          ? p1Vals.reduce((s, v) => s + v, 0) / p1Vals.length
+          : null,
+        phase2Avg: p2Vals && p2Vals.length > 0
+          ? p2Vals.reduce((s, v) => s + v, 0) / p2Vals.length
+          : null,
+      });
+    }
+  }
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 md:p-10 flex flex-col gap-6 font-sans">
@@ -360,6 +415,165 @@ export default function DashboardPage() {
               </ScatterChart>
             </ResponsiveContainer>
           </div>
+
+          {/* ── Detection Confidence Over Time ── */}
+          {confidenceChartData.length > 0 && (
+            <div className="flex flex-col gap-3 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 p-6 shadow-xl mt-2">
+              {/* Title */}
+              <div>
+                <h2 className="text-base font-semibold text-zinc-100 tracking-tight flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-teal-400 shadow-sm shadow-teal-400/60" />
+                  Detection Confidence Over Time
+                </h2>
+                <p className="text-xs text-zinc-500 mt-1">
+                  Phase-1 and Phase-2 use independent scales (see axis labels) —
+                  raw values are unchanged from detection.
+                </p>
+              </div>
+
+              {/* Line Chart */}
+              <div className="w-full h-[260px] pt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={confidenceChartData}
+                    margin={{ top: 10, right: 70, bottom: 20, left: 10 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+
+                    <XAxis
+                      type="number"
+                      dataKey="timestampMs"
+                      domain={[0, totalDurationMs]}
+                      scale="linear"
+                      tickFormatter={formatTimeMinutes}
+                      stroke="#71717a"
+                      tick={{ fill: '#a1a1aa', fontSize: 12 }}
+                    />
+
+                    {/* Left axis — Phase-1 Regularity, fixed [0, 1] */}
+                    <YAxis
+                      yAxisId="left"
+                      orientation="left"
+                      domain={[0, 1]}
+                      stroke="#f97316"
+                      tick={{ fill: '#f97316', fontSize: 11 }}
+                      tickFormatter={(v: number) => v.toFixed(2)}
+                      width={48}
+                      label={{
+                        value: 'Phase-1 Regularity',
+                        angle: -90,
+                        position: 'insideLeft',
+                        offset: 12,
+                        style: { fill: '#f97316', fontSize: 10, fontWeight: 600 },
+                      }}
+                    />
+
+                    {/* Right axis — Phase-2 Correlation, auto-scaled to real data range */}
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      domain={[0, 'auto']}
+                      stroke="#2dd4bf"
+                      tick={{ fill: '#2dd4bf', fontSize: 11 }}
+                      tickFormatter={(v: number) => v.toFixed(4)}
+                      width={62}
+                      label={{
+                        value: 'Phase-2 Correlation',
+                        angle: 90,
+                        position: 'insideRight',
+                        offset: 16,
+                        style: { fill: '#2dd4bf', fontSize: 10, fontWeight: 600 },
+                      }}
+                    />
+
+                    <Tooltip
+                      content={({ payload, label }) => {
+                        if (!payload || payload.length === 0) return null;
+                        return (
+                          <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-700 text-xs shadow-xl space-y-1">
+                            <div className="text-zinc-400 font-medium">
+                              {formatTimeMinutes(label as number)}
+                            </div>
+                            {payload.map((entry) => (
+                              <div
+                                key={entry.dataKey as string}
+                                className="flex items-center gap-2"
+                                style={{ color: entry.color }}
+                              >
+                                <span
+                                  className="w-2 h-2 rounded-full flex-shrink-0"
+                                  style={{ background: entry.color as string }}
+                                />
+                                <span className="text-zinc-300">
+                                  {entry.name}:{' '}
+                                  <span className="font-mono font-semibold">
+                                    {typeof entry.value === 'number'
+                                      ? entry.value.toFixed(4)
+                                      : '—'}
+                                  </span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }}
+                    />
+
+                    <Legend
+                      verticalAlign="top"
+                      align="right"
+                      wrapperStyle={{ fontSize: '12px', paddingBottom: '8px' }}
+                      formatter={(value) => (
+                        <span style={{ color: '#a1a1aa' }}>{value}</span>
+                      )}
+                    />
+
+                    {/* Phase transition reference line — bind to left axis so recharts places it correctly */}
+                    <ReferenceLine
+                      yAxisId="left"
+                      x={phase1EndMs}
+                      stroke="#f59e0b"
+                      strokeDasharray="5 5"
+                      strokeWidth={2}
+                      label={{
+                        value: 'Phase Transition',
+                        position: 'insideTopRight',
+                        fill: '#fbbf24',
+                        fontSize: 11,
+                        fontWeight: 600,
+                      }}
+                    />
+
+                    {/* Phase-1 regularity signal — orange, left axis */}
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="phase1Avg"
+                      name="Phase-1 Signal (regularity)"
+                      stroke="#f97316"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4, strokeWidth: 0 }}
+                      connectNulls
+                    />
+
+                    {/* Phase-2 correlation signal — teal, right axis (auto-scaled) */}
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="phase2Avg"
+                      name="Phase-2 Signal (correlation)"
+                      stroke="#2dd4bf"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4, strokeWidth: 0 }}
+                      connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
