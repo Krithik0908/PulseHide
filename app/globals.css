@@ -3,25 +3,65 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #09090b;
+  --foreground: #f4f4f5;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  color-scheme: dark;
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
+}
+
+@keyframes pulseHeartbeat {
+  0%, 100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0px rgba(239, 68, 68, 0));
+  }
+  14% {
+    transform: scale(1.09);
+    filter: drop-shadow(0 0 24px rgba(34, 211, 238, 0.45));
+  }
+  28% {
+    transform: scale(0.98);
+    filter: drop-shadow(0 0 10px rgba(239, 68, 68, 0.25));
+  }
+  42% {
+    transform: scale(1.06);
+    filter: drop-shadow(0 0 28px rgba(239, 68, 68, 0.5));
+  }
+  56% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 0px rgba(239, 68, 68, 0));
+  }
+}
+
+@keyframes pulseWave {
+  0% {
+    stroke-dashoffset: 320;
+    opacity: 0.3;
+  }
+  50% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+  100% {
+    stroke-dashoffset: -320;
+    opacity: 0.3;
+  }
+}
+
+.animate-heartbeat {
+  animation: pulseHeartbeat 1.35s ease-in-out infinite;
+}
+
+.animate-pulse-wave {
+  stroke-dasharray: 160;
+  animation: pulseWave 1.35s linear infinite;
 }
