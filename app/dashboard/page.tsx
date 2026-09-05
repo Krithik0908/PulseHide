@@ -67,14 +67,24 @@ export default function DashboardPage() {
     try {
       const res = await fetch('/api/run-scenario', { method: 'POST' });
       if (!res.ok) {
-        const errJson = await res.json();
-        throw new Error(errJson.details || errJson.error || 'Failed to run scenario');
+        let errMsg = `Request failed with status ${res.status}`;
+        try {
+          const errJson = await res.json();
+          errMsg = errJson.details || errJson.error || errMsg;
+        } catch {
+          // If response body is not valid JSON
+        }
+        throw new Error(errMsg);
       }
       const json: ScenarioResponse = await res.json();
       setData(json);
     } catch (err: unknown) {
-      console.error(err);
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      console.error('Scenario execution failed:', err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'An unexpected network or server error occurred while running the scenario.'
+      );
     } finally {
       setLoading(false);
     }
@@ -219,9 +229,26 @@ export default function DashboardPage() {
 
       {/* Error state */}
       {error && (
-        <div className="p-4 rounded-xl bg-red-950/40 border border-red-800/60 text-red-300 text-sm flex items-center gap-3">
-          <ShieldAlert className="w-5 h-5 flex-shrink-0 text-red-400" />
-          <span>{error}</span>
+        <div className="p-4 sm:p-5 rounded-2xl bg-red-950/30 border border-red-900/60 text-red-200 text-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-lg shadow-red-950/20">
+          <div className="flex items-start sm:items-center gap-3">
+            <div className="p-2 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 flex-shrink-0 mt-0.5 sm:mt-0">
+              <ShieldAlert className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="font-semibold text-red-300 text-xs uppercase tracking-wider">
+                Simulation Execution Failed
+              </span>
+              <span className="text-zinc-300 text-sm">{error}</span>
+            </div>
+          </div>
+          <button
+            onClick={handleRunScenario}
+            disabled={loading}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-red-600/80 hover:bg-red-500 text-white font-medium text-xs transition-all border border-red-500/30 shadow-sm cursor-pointer disabled:cursor-not-allowed disabled:opacity-50 self-start sm:self-auto flex-shrink-0"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            Retry
+          </button>
         </div>
       )}
 
