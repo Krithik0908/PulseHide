@@ -36,6 +36,8 @@ interface ScenarioResponse {
   phase1DurationMs: number;
   phase2DurationMs: number;
   totalDurationMs: number;
+  detectedTransitionMs?: number | null;
+  actualTransitionMs?: number;
   hostCategories: Record<string, HostCategory>;
   events: BeaconEvent[];
   phase1Timeline: TimelinePoint[];
@@ -46,6 +48,7 @@ interface ScenarioResponse {
     phase2Score: number;
     fusedScore: number;
     contained: boolean;
+    detectedTransitionMs?: number | null;
   }[];
   evaluationResult: {
     truePositives: string[];
@@ -186,6 +189,19 @@ export default function DashboardPage() {
       });
     }
   }
+
+  const detectedTransitionMs =
+    data?.detectedTransitionMs ??
+    data?.detectionResults?.[0]?.detectedTransitionMs ??
+    null;
+  const actualTransitionMs =
+    data?.actualTransitionMs ?? data?.phase1DurationMs ?? 3_600_000;
+  const detectedMin =
+    detectedTransitionMs !== null ? detectedTransitionMs / 60000 : null;
+  const actualMin = actualTransitionMs / 60000;
+  const deltaMin =
+    detectedMin !== null ? detectedMin - actualMin : null;
+  const deltaSign = deltaMin !== null && deltaMin > 0 ? '+' : '';
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 md:p-10 flex flex-col gap-6 font-sans">
@@ -446,15 +462,29 @@ export default function DashboardPage() {
           {/* ── Detection Confidence Over Time ── */}
           {confidenceChartData.length > 0 && (
             <div className="flex flex-col gap-3 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 p-6 shadow-xl mt-2">
-              {/* Title */}
-              <div>
-                <h2 className="text-base font-semibold text-zinc-100 tracking-tight flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-teal-400 shadow-sm shadow-teal-400/60" />
-                  Detection Confidence Over Time
-                </h2>
-                <p className="text-xs text-zinc-500 mt-1">
-                  Phase-1 and Phase-2 use independent scales (see axis labels) — raw values are unchanged from detection.
-                </p>
+              {/* Title & Self-Detection Callout */}
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-zinc-800/60 pb-3">
+                <div>
+                  <h2 className="text-base font-semibold text-zinc-100 tracking-tight flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-teal-400 shadow-sm shadow-teal-400/60" />
+                    Detection Confidence Over Time
+                  </h2>
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Phase-1 and Phase-2 use independent scales (see axis labels) — raw values are unchanged from detection.
+                  </p>
+                </div>
+
+                {detectedMin !== null && (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/60 text-xs text-purple-200 shadow-sm self-start md:self-auto flex-shrink-0">
+                    <span className="w-2 h-2 rounded-full bg-purple-400 shadow-sm shadow-purple-400/60 flex-shrink-0" />
+                    <span>
+                      System self-detected the phase change at{' '}
+                      <strong className="font-mono text-purple-300 font-semibold">{detectedMin.toFixed(1)}m</strong> — actual transition was at{' '}
+                      <strong className="font-mono text-zinc-200 font-semibold">{actualMin.toFixed(1)}m</strong>{' '}
+                      (delta: <strong className="font-mono text-purple-300 font-semibold">{deltaSign}{deltaMin.toFixed(1)}m</strong>).
+                    </span>
+                  </div>
+                )}
               </div>
 
               {/* Line Chart */}
@@ -556,10 +586,10 @@ export default function DashboardPage() {
                       )}
                     />
 
-                    {/* Phase transition reference line */}
+                    {/* Ground-truth Phase transition reference line (amber dashed) */}
                     <ReferenceLine
                       yAxisId="left"
-                      x={phase1EndMs}
+                      x={actualTransitionMs}
                       stroke="#f59e0b"
                       strokeDasharray="5 5"
                       strokeWidth={2}
@@ -571,6 +601,24 @@ export default function DashboardPage() {
                         fontWeight: 600,
                       }}
                     />
+
+                    {/* Self-detected Phase transition reference line (dotted violet/magenta) */}
+                    {detectedTransitionMs !== null && (
+                      <ReferenceLine
+                        yAxisId="left"
+                        x={detectedTransitionMs}
+                        stroke="#c084fc"
+                        strokeDasharray="2 3"
+                        strokeWidth={2}
+                        label={{
+                          value: 'Self-Detected',
+                          position: 'insideBottomLeft',
+                          fill: '#d8b4fe',
+                          fontSize: 11,
+                          fontWeight: 600,
+                        }}
+                      />
+                    )}
 
                     {/* Phase-1 regularity signal — orange, left axis */}
                     <Line

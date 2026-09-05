@@ -91,6 +91,8 @@ export async function POST() {
         ...runDoc.toObject(),
         events,
         hostCategories,
+        detectedTransitionMs: detectionResults[0]?.detectedTransitionMs ?? null,
+        actualTransitionMs: DEFAULT_SCENARIO.phase1DurationMs,
         phase1DurationMs: DEFAULT_SCENARIO.phase1DurationMs,
         phase2DurationMs: DEFAULT_SCENARIO.phase2DurationMs,
         totalDurationMs:
