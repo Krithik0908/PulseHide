@@ -1,4 +1,4 @@
-import { BeaconEvent } from './types';
+import { BeaconEvent, ScenarioConfig, getAllHostIds } from './types';
 
 // ─── Mathematical Helpers ───────────────────────────────────────────────────
 
@@ -327,4 +327,197 @@ export function scorePhase2(
   }
 
   return scores;
+}
+
+// ─── Fusion & End-to-End Detection Pipeline ──────────────────────────────────
+
+/**
+ * Result of the full multi-phase detection analysis for a single host.
+ */
+export interface DetectionResult {
+  hostId: string;
+  phase1Score: number;
+  phase2Score: number;
+  fusedScore: number;
+  contained: boolean;
+}
+
+/**
+ * Runs the full end-to-end detection pipeline on simulation beacon events.
+ *
+ * Fusion Strategy & Threshold Rationale:
+ * ──────────────────────────────────────
+ * 1. Phase 1 Score: Evaluates inter-arrival regularity in [0, phase1DurationMs).
+ *    - By design, Phase 1 cannot distinguish compromised C2 hosts from benign-regular
+ *      lookalikes (both score ~0.78-0.80).
+ * 2. Phase 2 Score: Evaluates coordinated multi-host burst clustering in
+ *    [phase1DurationMs, phase1DurationMs + phase2DurationMs).
+ *    - Phase 2 provides the core discriminatory separation (min compromised: 0.0567,
+ *      max benign: 0.0214).
+ * 3. Fusion Gate:
+ *      fusedScore = phase2Score * (phase1Score > 0.3 ? 1.0 : 0.5)
+ *    - Reasoning: Phase 1 alone is non-discriminating for regular lookalikes, but a host
+ *      with near-zero Phase 1 regularity (phase1Score ≤ 0.3) exhibiting high Phase 2
+ *      correlation is likely an incidental collision rather than genuine C2 beaconing.
+ *      Hence it is down-weighted rather than excluded entirely.
+ * 4. Containment Decision:
+ *      contained = fusedScore > 0.035
+ *    - Empirical Basis: Calibrated from DEFAULT_SCENARIO benchmarks where benign maximum
+ *      is 0.0214 and compromised minimum is 0.0567. Threshold 0.035 sits cleanly in the
+ *      middle of the separation margin.
+ *
+ * @param events - Flat array of simulation beacon events.
+ * @param config - Scenario configuration.
+ * @returns Array of DetectionResult sorted by fusedScore descending.
+ */
+export function runDetection(
+  events: BeaconEvent[],
+  config: ScenarioConfig,
+): DetectionResult[] {
+  const allHostIds = getAllHostIds(config);
+  const phase1EndMs = config.phase1DurationMs;
+  const phase2EndMs = config.phase1DurationMs + config.phase2DurationMs;
+
+  // 1. Phase 1 scoring across [0, phase1EndMs)
+  const p1Scores = scoreAllHostsPhase1(events, allHostIds, 0, phase1EndMs);
+
+  // 2. Phase 2 scoring across [phase1EndMs, phase2EndMs)
+  const p2Scores = scorePhase2(
+    events,
+    allHostIds,
+    phase1EndMs,
+    phase2EndMs,
+    config.phase2BurstWindowMs,
+  );
+
+  // 3. Fusion & Containment Threshold
+  const CONTAINMENT_THRESHOLD = 0.035;
+
+  const results: DetectionResult[] = allHostIds.map((hostId) => {
+    const p1 = p1Scores[hostId] ?? 0;
+    const p2 = p2Scores[hostId] ?? 0;
+
+    // Fusion: Gate Phase 2 with Phase 1 non-randomness check
+    const fusedScore = p2 * (p1 > 0.3 ? 1.0 : 0.5);
+    const contained = fusedScore > CONTAINMENT_THRESHOLD;
+
+    return {
+      hostId,
+      phase1Score: p1,
+      phase2Score: p2,
+      fusedScore,
+      contained,
+    };
+  });
+
+  // 5. Sort by fusedScore descending
+  results.sort((a, b) => b.fusedScore - a.fusedScore);
+
+  return results;
+}
+
+// ─── Time-Series Confidence Timeline Generators ──────────────────────────────
+
+/**
+ * A single temporal data point in a confidence timeline.
+ */
+export interface ConfidenceTimelinePoint {
+  timestampMs: number;
+  hostId: string;
+  score: number;
+}
+
+/**
+ * Slides a temporal window across the entire simulation duration (0 to totalDurationMs)
+ * and computes Phase 1 interval regularity for each host at each step.
+ *
+ * Useful for charting how the regular beacon signal decays or evolves over time.
+ *
+ * @param events - Simulation beacon events.
+ * @param hostIds - List of host IDs to track.
+ * @param config - Scenario configuration.
+ * @param windowSizeMs - Duration of the rolling evaluation window (ms).
+ * @param stepMs - Step size to advance the window forward (ms).
+ * @returns Array of ConfidenceTimelinePoint records.
+ */
+export function getPhase1ConfidenceTimeline(
+  events: BeaconEvent[],
+  hostIds: string[],
+  config: ScenarioConfig,
+  windowSizeMs: number,
+  stepMs: number,
+): ConfidenceTimelinePoint[] {
+  const totalDurationMs = config.phase1DurationMs + config.phase2DurationMs;
+  const points: ConfidenceTimelinePoint[] = [];
+
+  for (let t = 0; t + windowSizeMs <= totalDurationMs; t += stepMs) {
+    const windowStart = t;
+    const windowEnd = t + windowSizeMs;
+    // Use windowEnd as the observation timestamp
+    const timestampMs = windowEnd;
+
+    for (const hostId of hostIds) {
+      const score = scorePhase1(events, hostId, windowStart, windowEnd);
+      points.push({
+        timestampMs,
+        hostId,
+        score,
+      });
+    }
+  }
+
+  return points;
+}
+
+/**
+ * Slides a temporal window across Phase 2 (phase1DurationMs to totalDurationMs)
+ * and computes Phase 2 multi-host coordinated cluster scores at each step.
+ *
+ * Useful for charting when the coordinated burst behavior emerges in Phase 2.
+ *
+ * @param events - Simulation beacon events.
+ * @param hostIds - List of host IDs to track.
+ * @param config - Scenario configuration.
+ * @param windowSizeMs - Duration of the rolling evaluation window (ms).
+ * @param stepMs - Step size to advance the window forward (ms).
+ * @returns Array of ConfidenceTimelinePoint records.
+ */
+export function getPhase2ConfidenceTimeline(
+  events: BeaconEvent[],
+  hostIds: string[],
+  config: ScenarioConfig,
+  windowSizeMs: number,
+  stepMs: number,
+): ConfidenceTimelinePoint[] {
+  const phase1EndMs = config.phase1DurationMs;
+  const totalDurationMs = config.phase1DurationMs + config.phase2DurationMs;
+  const points: ConfidenceTimelinePoint[] = [];
+
+  for (
+    let t = phase1EndMs;
+    t + windowSizeMs <= totalDurationMs;
+    t += stepMs
+  ) {
+    const windowStart = t;
+    const windowEnd = t + windowSizeMs;
+    const timestampMs = windowEnd;
+
+    const scores = scorePhase2(
+      events,
+      hostIds,
+      windowStart,
+      windowEnd,
+      config.phase2BurstWindowMs,
+    );
+
+    for (const hostId of hostIds) {
+      points.push({
+        timestampMs,
+        hostId,
+        score: scores[hostId] ?? 0,
+      });
+    }
+  }
+
+  return points;
 }
