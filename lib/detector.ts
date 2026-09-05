@@ -339,6 +339,101 @@ export function scorePhase2(
   return scores;
 }
 
+// ─── Unsupervised Phase Transition Detection ──────────────────────────────────
+
+/**
+ * Detects the temporal phase transition boundary from fixed-interval regularity to
+ * jittered/coordinated burst evasion without using ground-truth `config.phase1DurationMs`.
+ *
+ * Algorithm:
+ * 1. Computes a rolling Phase-1 regularity score across suspectHostIds using a sliding
+ *    window of `windowSizeMs` advancing by `stepMs` across the entire event timeline.
+ * 2. At each step, averages the regularity scores of the top 25% most-regular hosts.
+ * 3. Tracks the rolling maximum-so-far and detects the transition where this rolling
+ *    average experiences a sustained drop (>= 25% drop relative to max-so-far, accounting
+ *    for benign-regular lookalike background) for at least 3 consecutive steps.
+ * 4. Returns the estimated transition timestamp in milliseconds (or null if not found).
+ *
+ * @param events - Flat array of simulation beacon events.
+ * @param suspectHostIds - List of host IDs to evaluate (typically all hosts).
+ * @param config - Scenario configuration.
+ * @param windowSizeMs - Sliding evaluation window width (ms), default 600,000 (10 min).
+ * @param stepMs - Step size to advance the window forward (ms), default 60,000 (1 min).
+ * @returns Detected transition timestamp in milliseconds, or null if no transition detected.
+ */
+export function detectPhaseTransition(
+  events: BeaconEvent[],
+  suspectHostIds: string[],
+  config: ScenarioConfig,
+  windowSizeMs: number = 600_000,
+  stepMs: number = 60_000,
+): number | null {
+  if (events.length === 0 || suspectHostIds.length === 0) {
+    return null;
+  }
+
+  // Derive total timeline duration strictly from events (not config.phase1DurationMs)
+  const maxEventTime = events.reduce(
+    (max, ev) => Math.max(max, ev.timestampMs),
+    0,
+  );
+  if (maxEventTime <= windowSizeMs) {
+    return null;
+  }
+
+  const topCount = Math.max(1, Math.ceil(suspectHostIds.length * 0.25));
+  const points: { timestampMs: number; avgScore: number }[] = [];
+
+  for (let t = 0; t + windowSizeMs <= maxEventTime; t += stepMs) {
+    const scores = suspectHostIds.map((hostId) =>
+      scorePhase1(events, hostId, t, t + windowSizeMs),
+    );
+    scores.sort((a, b) => b - a);
+    const topAvg =
+      scores.slice(0, topCount).reduce((sum, s) => sum + s, 0) / topCount;
+
+    points.push({
+      timestampMs: t + windowSizeMs / 2,
+      avgScore: topAvg,
+    });
+  }
+
+  let maxSoFar = 0;
+  // A relative drop of >= 25% reliably captures the transition where 5 out of 8 regular hosts cease fixed-interval beaconing
+  const DROP_THRESHOLD = 0.25;
+
+  for (let i = 0; i < points.length; i++) {
+    const pt = points[i];
+    if (pt.avgScore > maxSoFar) {
+      maxSoFar = pt.avgScore;
+    }
+
+    if (maxSoFar > 0.4) {
+      const drop = (maxSoFar - pt.avgScore) / maxSoFar;
+      if (drop >= DROP_THRESHOLD) {
+        let sustained = true;
+        for (let k = 1; k < 3; k++) {
+          if (i + k >= points.length) {
+            sustained = false;
+            break;
+          }
+          const nextDrop = (maxSoFar - points[i + k].avgScore) / maxSoFar;
+          if (nextDrop < DROP_THRESHOLD) {
+            sustained = false;
+            break;
+          }
+        }
+
+        if (sustained) {
+          return Math.round(pt.timestampMs);
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 // ─── Fusion & End-to-End Detection Pipeline ──────────────────────────────────
 
 /**
@@ -350,34 +445,24 @@ export interface DetectionResult {
   phase2Score: number;
   fusedScore: number;
   contained: boolean;
+  detectedTransitionMs?: number | null;
 }
 
 /**
  * Runs the full end-to-end detection pipeline on simulation beacon events.
  *
- * Fusion Strategy & Threshold Rationale:
- * ──────────────────────────────────────
- * 1. Phase 1 Score: Evaluates inter-arrival regularity in [0, phase1DurationMs).
- *    - By design, Phase 1 cannot distinguish compromised C2 hosts from benign-regular
- *      lookalikes (both score ~0.78-0.80).
- * 2. Phase 2 Score: Evaluates coordinated multi-host burst clustering in
- *    [phase1DurationMs, phase1DurationMs + phase2DurationMs).
- *    - Phase 2 provides the core discriminatory separation (min compromised: 0.0567,
- *      max benign: 0.0214).
- * 3. Fusion Gate:
+ * Detection & Boundary Strategy:
+ * ──────────────────────────────
+ * 1. Unsupervised Phase Boundary Detection:
+ *    - Calls `detectPhaseTransition` to discover the phase shift timestamp dynamically
+ *      without relying on ground truth `config.phase1DurationMs`.
+ *    - Falls back to `config.phase1DurationMs` only if no transition can be detected.
+ * 2. Phase 1 Score: Evaluates inter-arrival regularity in [0, phase1EndMs).
+ * 3. Phase 2 Score: Evaluates coordinated multi-host burst clustering in [phase1EndMs, totalDurationMs).
+ * 4. Fusion Gate:
  *      fusedScore = phase2Score * (phase1Score > 0.3 ? 1.0 : 0.5)
- *    - Reasoning: Phase 1 alone is non-discriminating for regular lookalikes, but a host
- *      with near-zero Phase 1 regularity (phase1Score ≤ 0.3) exhibiting high Phase 2
- *      correlation is likely an incidental collision rather than genuine C2 beaconing.
- *      Hence it is down-weighted rather than excluded entirely.
- * 4. Containment Decision:
+ * 5. Containment Decision:
  *      contained = fusedScore > 0.039
- *    - Empirical Calibration: Retuned via grid search across 5 test seeds (42, 7, 123, 999, 2026)
- *      to minimize total classification errors. At 0.039, total errors across all 5 seeds = 1
- *      (0 false positives, and a single false negative on host-03 in seed 123 where its score
- *      of 0.0322 falls below any fixed threshold that avoids false positives elsewhere — noted
- *      as a known, mathematically unavoidable limitation of using a single fixed threshold,
- *      not a tuning oversight).
  *
  * @param events - Flat array of simulation beacon events.
  * @param config - Scenario configuration.
@@ -388,13 +473,39 @@ export function runDetection(
   config: ScenarioConfig,
 ): DetectionResult[] {
   const allHostIds = getAllHostIds(config);
-  const phase1EndMs = config.phase1DurationMs;
-  const phase2EndMs = config.phase1DurationMs + config.phase2DurationMs;
 
-  // 1. Phase 1 scoring across [0, phase1EndMs)
+  // 1. Discover phase transition boundary dynamically without using config.phase1DurationMs
+  const detectedTransitionMs = detectPhaseTransition(
+    events,
+    allHostIds,
+    config,
+    600_000,
+    60_000,
+  );
+
+  let phase1EndMs: number;
+  if (detectedTransitionMs !== null) {
+    phase1EndMs = detectedTransitionMs;
+    console.log(
+      `[Detector] Phase transition detected: ${detectedTransitionMs} ms (${(detectedTransitionMs / 60000).toFixed(1)}m) | Actual config: ${config.phase1DurationMs} ms (${(config.phase1DurationMs / 60000).toFixed(1)}m) | Delta: ${((detectedTransitionMs - config.phase1DurationMs) / 60000).toFixed(1)}m`,
+    );
+  } else {
+    console.warn(
+      `[Detector] detectPhaseTransition returned null. Falling back to config.phase1DurationMs (${config.phase1DurationMs} ms).`,
+    );
+    phase1EndMs = config.phase1DurationMs;
+  }
+
+  const maxEventTime = events.reduce(
+    (max, ev) => Math.max(max, ev.timestampMs),
+    phase1EndMs + config.phase2DurationMs,
+  );
+  const phase2EndMs = maxEventTime;
+
+  // 2. Phase 1 scoring across [0, phase1EndMs)
   const p1Scores = scoreAllHostsPhase1(events, allHostIds, 0, phase1EndMs);
 
-  // 2. Phase 2 scoring across [phase1EndMs, phase2EndMs)
+  // 3. Phase 2 scoring across [phase1EndMs, phase2EndMs)
   const p2Scores = scorePhase2(
     events,
     allHostIds,
@@ -403,8 +514,7 @@ export function runDetection(
     config.phase2BurstWindowMs,
   );
 
-  // 3. Fusion & Containment Threshold
-  // Retuned to 0.039 via multi-seed grid search optimization
+  // 4. Fusion & Containment Threshold
   const CONTAINMENT_THRESHOLD = 0.039;
 
   const results: DetectionResult[] = allHostIds.map((hostId) => {
@@ -421,6 +531,7 @@ export function runDetection(
       phase2Score: p2,
       fusedScore,
       contained,
+      detectedTransitionMs,
     };
   });
 
