@@ -426,8 +426,7 @@ export default function DashboardPage() {
                   Detection Confidence Over Time
                 </h2>
                 <p className="text-xs text-zinc-500 mt-1">
-                  Phase-1 and Phase-2 use independent scales (see axis labels) —
-                  raw values are unchanged from detection.
+                  Phase-1 and Phase-2 use independent scales (see axis labels) — raw values are unchanged from detection.
                 </p>
               </div>
 
@@ -436,7 +435,7 @@ export default function DashboardPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart
                     data={confidenceChartData}
-                    margin={{ top: 10, right: 70, bottom: 20, left: 10 }}
+                    margin={{ top: 10, right: 65, bottom: 20, left: 15 }}
                   >
                     <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
 
@@ -456,34 +455,36 @@ export default function DashboardPage() {
                       orientation="left"
                       domain={[0, 1]}
                       stroke="#f97316"
-                      tick={{ fill: '#f97316', fontSize: 11 }}
-                      tickFormatter={(v: number) => v.toFixed(2)}
-                      width={48}
+                      tick={{ fill: '#fdba74', fontSize: 11 }}
+                      tickFormatter={(v: number) => v.toFixed(1)}
                       label={{
                         value: 'Phase-1 Regularity',
                         angle: -90,
                         position: 'insideLeft',
-                        offset: 12,
-                        style: { fill: '#f97316', fontSize: 10, fontWeight: 600 },
+                        fill: '#f97316',
+                        fontSize: 11,
+                        dy: 50,
                       }}
+                      width={45}
                     />
 
-                    {/* Right axis — Phase-2 Correlation, auto-scaled to real data range */}
+                    {/* Right axis — Phase-2 Correlation, auto-scale */}
                     <YAxis
                       yAxisId="right"
                       orientation="right"
                       domain={[0, 'auto']}
                       stroke="#2dd4bf"
-                      tick={{ fill: '#2dd4bf', fontSize: 11 }}
-                      tickFormatter={(v: number) => v.toFixed(4)}
-                      width={62}
+                      tick={{ fill: '#5eead4', fontSize: 11 }}
+                      tickFormatter={(v: number) => v.toFixed(3)}
                       label={{
                         value: 'Phase-2 Correlation',
                         angle: 90,
                         position: 'insideRight',
-                        offset: 16,
-                        style: { fill: '#2dd4bf', fontSize: 10, fontWeight: 600 },
+                        fill: '#2dd4bf',
+                        fontSize: 11,
+                        dy: 50,
                       }}
+                      width={55}
                     />
 
                     <Tooltip
@@ -528,7 +529,7 @@ export default function DashboardPage() {
                       )}
                     />
 
-                    {/* Phase transition reference line — bind to left axis so recharts places it correctly */}
+                    {/* Phase transition reference line */}
                     <ReferenceLine
                       yAxisId="left"
                       x={phase1EndMs}
@@ -557,7 +558,7 @@ export default function DashboardPage() {
                       connectNulls
                     />
 
-                    {/* Phase-2 correlation signal — teal, right axis (auto-scaled) */}
+                    {/* Phase-2 correlation signal — teal, right axis */}
                     <Line
                       yAxisId="right"
                       type="monotone"
@@ -571,6 +572,179 @@ export default function DashboardPage() {
                     />
                   </LineChart>
                 </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+
+          {/* ── Containment Results Section ── */}
+          {data.detectionResults && (
+            <div className="flex flex-col gap-6 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 p-6 shadow-xl mt-2">
+              {/* Section Header */}
+              <div className="flex flex-col gap-1 border-b border-zinc-800/60 pb-4">
+                <h2 className="text-lg font-bold text-zinc-100 tracking-tight flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-red-400" />
+                  Containment Results
+                </h2>
+                <p className="text-xs text-zinc-400">
+                  Per-host fused detection scores, categorization, and automated containment actions.
+                </p>
+              </div>
+
+              {/* Summary Banner */}
+              <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 p-4 rounded-xl bg-zinc-950/70 border border-zinc-800">
+                {/* Large PASS/FAIL Badge */}
+                <div className="flex items-center gap-4">
+                  {data.evaluationResult?.passed ? (
+                    <div className="inline-flex items-center gap-2.5 px-5 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400">
+                      <ShieldCheck className="w-7 h-7 flex-shrink-0" />
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wider text-emerald-500">Evaluation</div>
+                        <div className="text-xl font-black tracking-wide">PASS</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="inline-flex items-center gap-2.5 px-5 py-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400">
+                      <ShieldAlert className="w-7 h-7 flex-shrink-0" />
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wider text-red-500">Evaluation</div>
+                        <div className="text-xl font-black tracking-wide">FAIL</div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 4 Counters */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    <div className="px-3.5 py-2 rounded-lg bg-zinc-900 border border-zinc-800 flex flex-col">
+                      <span className="text-[10px] uppercase font-semibold text-zinc-400">True Positives</span>
+                      <span className="text-lg font-bold text-emerald-400">
+                        {data.evaluationResult?.truePositives?.length ?? 0}
+                      </span>
+                    </div>
+                    <div className="px-3.5 py-2 rounded-lg bg-zinc-900 border border-zinc-800 flex flex-col">
+                      <span className="text-[10px] uppercase font-semibold text-zinc-400">False Positives</span>
+                      <span className={`text-lg font-bold ${
+                        (data.evaluationResult?.falsePositives?.length ?? 0) > 0 ? 'text-red-400' : 'text-zinc-200'
+                      }`}>
+                        {data.evaluationResult?.falsePositives?.length ?? 0}
+                      </span>
+                    </div>
+                    <div className="px-3.5 py-2 rounded-lg bg-zinc-900 border border-zinc-800 flex flex-col">
+                      <span className="text-[10px] uppercase font-semibold text-zinc-400">False Negatives</span>
+                      <span className={`text-lg font-bold ${
+                        (data.evaluationResult?.falseNegatives?.length ?? 0) > 0 ? 'text-red-400' : 'text-zinc-200'
+                      }`}>
+                        {data.evaluationResult?.falseNegatives?.length ?? 0}
+                      </span>
+                    </div>
+                    <div className="px-3.5 py-2 rounded-lg bg-zinc-900 border border-zinc-800 flex flex-col">
+                      <span className="text-[10px] uppercase font-semibold text-zinc-400">True Negatives</span>
+                      <span className="text-lg font-bold text-zinc-200">
+                        {data.evaluationResult?.trueNegatives?.length ?? 0}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Narrative Note Callout */}
+                <div className="text-xs text-zinc-400 bg-zinc-900/90 border border-zinc-800 rounded-xl px-4 py-3 max-w-md">
+                  <span className="text-amber-400 font-semibold">Note:&nbsp;</span>
+                  Detection uses adaptive phase-2 correlation once phase-1 regularity becomes uninformative (see confidence chart above).
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="overflow-x-auto rounded-xl border border-zinc-800">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-zinc-950/80 border-b border-zinc-800 text-zinc-400 font-semibold uppercase tracking-wider text-[11px]">
+                      <th className="py-3 px-4">Host ID</th>
+                      <th className="py-3 px-4">Category</th>
+                      <th className="py-3 px-4 text-right">Phase-1 Score</th>
+                      <th className="py-3 px-4 text-right">Phase-2 Score</th>
+                      <th className="py-3 px-4 text-right">Fused Score</th>
+                      <th className="py-3 px-4 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/60 bg-zinc-900/30">
+                    {(() => {
+                      const categoryPriority: Record<HostCategory, number> = {
+                        compromised: 0,
+                        benignRegular: 1,
+                        benignBursty: 2,
+                        plainBenign: 3,
+                      };
+
+                      const sorted = [...data.detectionResults].sort((a, b) => {
+                        const catA = data.hostCategories[a.hostId] || 'plainBenign';
+                        const catB = data.hostCategories[b.hostId] || 'plainBenign';
+                        const prioA = categoryPriority[catA] ?? 99;
+                        const prioB = categoryPriority[catB] ?? 99;
+                        if (prioA !== prioB) {
+                          return prioA - prioB;
+                        }
+                        return b.fusedScore - a.fusedScore;
+                      });
+
+                      return sorted.map((row) => {
+                        const category = data.hostCategories[row.hostId] || 'plainBenign';
+                        return (
+                          <tr
+                            key={row.hostId}
+                            className="hover:bg-zinc-800/40 transition-colors"
+                          >
+                            <td className="py-2.5 px-4 font-mono font-semibold text-zinc-200">
+                              {row.hostId}
+                            </td>
+                            <td className="py-2.5 px-4">
+                              {category === 'compromised' && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-red-500/10 text-red-400 border border-red-500/20">
+                                  Compromised
+                                </span>
+                              )}
+                              {category === 'benignRegular' && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-orange-500/10 text-orange-400 border border-orange-500/20">
+                                  Benign-Regular
+                                </span>
+                              )}
+                              {category === 'benignBursty' && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                  Benign-Bursty
+                                </span>
+                              )}
+                              {category === 'plainBenign' && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-zinc-800 text-zinc-300 border border-zinc-700/60">
+                                  Plain Benign
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-zinc-300">
+                              {row.phase1Score.toFixed(4)}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono text-zinc-300">
+                              {row.phase2Score.toFixed(4)}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-mono font-bold text-zinc-100">
+                              {row.fusedScore.toFixed(4)}
+                            </td>
+                            <td className="py-2.5 px-4 text-center">
+                              {row.contained ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-red-500/15 text-red-400 border border-red-500/30">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                                  Contained
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                  Reachable
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
