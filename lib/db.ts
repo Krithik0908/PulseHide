@@ -60,6 +60,16 @@ async function dbConnect(): Promise<Mongoose> {
     return cached.conn;
   }
 
+  // Explicitly set public DNS servers to resolve MongoDB SRV records on Windows
+  try {
+    dns.setServers(['8.8.8.8', '8.8.4.4', '1.1.1.1']);
+    if (typeof dns.setDefaultResultOrder === 'function') {
+      dns.setDefaultResultOrder('ipv4first');
+    }
+  } catch {
+    // Ignore if not supported in environment
+  }
+
   // Initiate a new connection if one is not already in progress
   if (!cached.promise) {
     const opts: mongoose.ConnectOptions = {

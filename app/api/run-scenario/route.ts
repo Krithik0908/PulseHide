@@ -15,7 +15,8 @@ import { evaluate } from '@/lib/evaluator';
  *
  * Runs the end-to-end beacon simulation, multi-phase detection, evaluation,
  * and temporal timeline generators on DEFAULT_SCENARIO, persisting the resulting
- * run into MongoDB and returning the saved document.
+ * run into MongoDB and returning the document augmented with raw events and
+ * categorized host metadata for frontend visual rendering.
  */
 export async function POST() {
   try {
@@ -52,8 +53,30 @@ export async function POST() {
       stepMs,
     );
 
-    // 4. Persist run document to MongoDB
-    // Note: raw events (1,934 items) are omitted to keep document size lean (<50 KB)
+    // 4. Derive host categories lookup for frontend rendering
+    const compromisedSet = new Set(DEFAULT_SCENARIO.compromisedHostIds);
+    const benignRegularSet = new Set(DEFAULT_SCENARIO.benignRegularHostIds);
+    const benignBurstySet = new Set(DEFAULT_SCENARIO.benignBurstyHostIds);
+
+    const hostCategories: Record<
+      string,
+      'compromised' | 'benignRegular' | 'benignBursty' | 'plainBenign'
+    > = {};
+
+    for (const hostId of allHostIds) {
+      if (compromisedSet.has(hostId)) {
+        hostCategories[hostId] = 'compromised';
+      } else if (benignRegularSet.has(hostId)) {
+        hostCategories[hostId] = 'benignRegular';
+      } else if (benignBurstySet.has(hostId)) {
+        hostCategories[hostId] = 'benignBursty';
+      } else {
+        hostCategories[hostId] = 'plainBenign';
+      }
+    }
+
+    // 5. Persist run document to MongoDB
+    // Note: raw events (1,934 items) are omitted from MongoDB to keep document size lean (<50 KB)
     const runDoc = await Run.create({
       scenarioSeed: DEFAULT_SCENARIO.seed,
       detectionResults,
@@ -62,8 +85,19 @@ export async function POST() {
       phase2Timeline,
     });
 
-    // 5. Return persisted document
-    return NextResponse.json(runDoc, { status: 201 });
+    // 6. Return persisted document augmented with events & categories in the response JSON
+    return NextResponse.json(
+      {
+        ...runDoc.toObject(),
+        events,
+        hostCategories,
+        phase1DurationMs: DEFAULT_SCENARIO.phase1DurationMs,
+        phase2DurationMs: DEFAULT_SCENARIO.phase2DurationMs,
+        totalDurationMs:
+          DEFAULT_SCENARIO.phase1DurationMs + DEFAULT_SCENARIO.phase2DurationMs,
+      },
+      { status: 201 },
+    );
   } catch (error: unknown) {
     console.error('Error running scenario API:', error);
     const errorMessage =
