@@ -115,7 +115,7 @@ export function scorePhase1(
   const cv = stdDev / mean;
 
   // 5. Convert CV to [0, 1] regularity score
-  // Formula: score = 1 / (1 + CV * 10)
+  // Formula: score = 1 / (1 + cv * 10)
   const rawScore = 1 / (1 + cv * 10);
 
   // 6. Clamp to [0, 1]
@@ -151,11 +151,11 @@ export function scoreAllHostsPhase1(
   return scores;
 }
 
-// ─── Phase 2 Temporal Co-occurrence / Correlation Scoring ───────────────────
+// ─── Phase 2 Temporal Co-occurrence & Mutually-Reinforcing Cluster Scoring ───
 
 /**
  * Computes Phase 2 temporal correlation scores across a set of hosts using
- * multi-host Jaccard bucket similarity and top-K peer averaging.
+ * multi-host Jaccard bucket similarity and mutually-reinforcing cluster cohesion.
  *
  * Algorithm & Design Rationale:
  * ─────────────────────────────
@@ -165,15 +165,27 @@ export function scoreAllHostsPhase1(
  *    Build a Set of active bucket indices for each host.
  * 3. Compute pairwise Jaccard similarity:
  *      J(H_i, H_j) = |Buckets(H_i) ∩ Buckets(H_j)| / |Buckets(H_i) ∪ Buckets(H_j)|
- * 4. Top-K Peer Averaging (K = 4):
- *    - In a fleet with many benign hosts and a small subset of compromised hosts
- *      (e.g., 5 out of 20 hosts), a global average across all 19 other hosts would
- *      dilute the true synchronized cluster signal with the ~15 uncorrelated hosts.
- *    - Averaging only against the host's top-K most similar peers captures whether
- *      the host participates in a tightly coordinated cluster of size K+1 (e.g. K=4
- *      for a 5-member C2 botnet group), while completely ignoring the large
- *      background of uncoordinated hosts.
- * 5. Clamped to [0, 1].
+ * 4. Find Top-K Peer Neighborhoods (K = 4):
+ *    - For each host H_i, rank all other hosts by Jaccard similarity and extract its
+ *      top-K most similar peers.
+ *    - Compute raw Top-K average Jaccard similarity:
+ *        rawTopKAvg = (1 / K) * Σ J(H_i, P_j)
+ * 5. Peer Consistency & Mutual Reinforcement:
+ *    - Plain benign hosts exhibit incidental, shifting overlaps due to Poisson collisions.
+ *      Even if a benign host has a moderate pairwise similarity with some random peer,
+ *      those peers do NOT mutually co-occur with each other or reciprocate.
+ *    - In contrast, coordinated C2 bots form a tight mutually-reinforcing clique.
+ *    - We compute two structural cluster consistency measures:
+ *      a) Reciprocity Ratio (R): Fraction of H_i's top-K peers that ALSO have H_i in their top-K.
+ *      b) Internal Clique Density (C): Fraction of peer pairs (P_a, P_b) within H_i's top-K
+ *         neighborhood that mutually have each other in their respective top-K lists.
+ *    - Combined Cluster Consistency Multiplier:
+ *        clusterConsistency = R * C
+ * 6. Final Score:
+ *      Score_P2(H_i) = rawTopKAvg * clusterConsistency
+ *    - A host scores high if and only if it BOTH co-occurs frequently with specific peers
+ *      AND those peers mutually co-occur with each other and with it (a genuine coordinated cluster).
+ *    - Clamped to [0, 1].
  *
  * @param events - Flat array of simulation beacon events.
  * @param hostIds - Array of all host IDs to score.
@@ -212,7 +224,6 @@ export function scorePhase2(
 
   // 3. Compute pairwise Jaccard similarities
   const n = hostIds.length;
-  // Pre-allocate similarity matrix / lookup
   const pairwiseSimilarity = new Map<string, Map<string, number>>();
   for (const hostId of hostIds) {
     pairwiseSimilarity.set(hostId, new Map<string, number>());
@@ -232,32 +243,87 @@ export function scorePhase2(
     }
   }
 
-  // 4. Compute Top-K average similarity for each host (K = 4)
+  // 4. Find top-K most-similar peers for each host (K = 4)
   const TOP_K = 4;
-  const scores: Record<string, number> = {};
+  const topKPeersByHost = new Map<string, string[]>();
+  const topKSimsByHost = new Map<string, number[]>();
 
   for (const hostId of hostIds) {
     const peerSimsMap = pairwiseSimilarity.get(hostId)!;
-    const peerSims: number[] = [];
+    const peerList: { hostId: string; sim: number }[] = [];
 
     for (const otherHost of hostIds) {
       if (otherHost !== hostId) {
-        peerSims.push(peerSimsMap.get(otherHost) ?? 0);
+        peerList.push({
+          hostId: otherHost,
+          sim: peerSimsMap.get(otherHost) ?? 0,
+        });
       }
     }
 
-    // Sort peer similarities descending
-    peerSims.sort((a, b) => b - a);
+    peerList.sort((a, b) => b.sim - a.sim);
 
-    const k = Math.min(TOP_K, peerSims.length);
-    if (k === 0) {
+    const k = Math.min(TOP_K, peerList.length);
+    topKPeersByHost.set(
+      hostId,
+      peerList.slice(0, k).map((p) => p.hostId),
+    );
+    topKSimsByHost.set(
+      hostId,
+      peerList.slice(0, k).map((p) => p.sim),
+    );
+  }
+
+  // 5. Compute Mutually-Reinforcing Cluster Cohesion Scores
+  const scores: Record<string, number> = {};
+
+  for (const hostId of hostIds) {
+    const topPeers = topKPeersByHost.get(hostId)!;
+    const topSims = topKSimsByHost.get(hostId)!;
+
+    if (topPeers.length === 0 || topSims.length === 0) {
       scores[hostId] = 0;
-    } else {
-      const topKSims = peerSims.slice(0, k);
-      const topKMean = topKSims.reduce((sum, v) => sum + v, 0) / k;
-      // 5. Clamp to [0, 1]
-      scores[hostId] = Math.min(1, Math.max(0, topKMean));
+      continue;
     }
+
+    const rawTopKAvg =
+      topSims.reduce((sum, v) => sum + v, 0) / topSims.length;
+
+    // A. Reciprocity Ratio: How many of my top-K peers also have ME in their top-K?
+    let reciprocalCount = 0;
+    for (const peer of topPeers) {
+      const peerTopK = topKPeersByHost.get(peer) ?? [];
+      if (peerTopK.includes(hostId)) {
+        reciprocalCount++;
+      }
+    }
+    const reciprocityRatio = reciprocalCount / topPeers.length;
+
+    // B. Internal Mutual Clique Density: Among my top-K peers, how many pairs are mutually in each other's top-K?
+    let internalMutualPairs = 0;
+    let totalPairs = 0;
+    for (let i = 0; i < topPeers.length; i++) {
+      for (let j = i + 1; j < topPeers.length; j++) {
+        totalPairs++;
+        const p1 = topPeers[i];
+        const p2 = topPeers[j];
+        const p1TopK = topKPeersByHost.get(p1) ?? [];
+        const p2TopK = topKPeersByHost.get(p2) ?? [];
+        if (p1TopK.includes(p2) && p2TopK.includes(p1)) {
+          internalMutualPairs++;
+        }
+      }
+    }
+    const internalCliqueDensity =
+      totalPairs > 0 ? internalMutualPairs / totalPairs : 0;
+
+    // Combined Cluster Consistency Multiplier
+    const clusterConsistency = reciprocityRatio * internalCliqueDensity;
+
+    // Final score = rawTopKAvg * clusterConsistency
+    const finalScore = rawTopKAvg * clusterConsistency;
+
+    scores[hostId] = Math.min(1, Math.max(0, finalScore));
   }
 
   return scores;
