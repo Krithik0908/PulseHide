@@ -18,6 +18,7 @@ import {
 } from 'recharts';
 import { Play, RefreshCw, ShieldAlert, ShieldCheck, ArrowLeft } from 'lucide-react';
 import KineticMatrix from '@/components/ui/kinetic-matrix';
+import { BeaconTimelineReplay, ConfidenceReplay } from '@/components/dashboard/ReplayViews';
 
 interface BeaconEvent {
   hostId: string;
@@ -103,7 +104,16 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [loading]);
 
-  // Lightweight IntersectionObserver for scrollspy without main-thread scroll listener overhead
+  // ── REPLAY MODE TOGGLES ────────────────────────────────────────────────────
+  const [beaconReplayMode, setBeaconReplayMode] = useState(false);
+  const [confReplayMode, setConfReplayMode] = useState(false);
+
+  // Reset replay modes when new data arrives
+  useEffect(() => {
+    setBeaconReplayMode(false);
+    setConfReplayMode(false);
+  }, [data]);
+
   useEffect(() => {
     if (!data) return;
 
@@ -193,6 +203,8 @@ export default function DashboardPage() {
       setLoading(false);
     }
   };
+
+
 
   // Generate 20 host IDs in order (host-01 to host-20)
   const hostIds = useMemo(
@@ -316,6 +328,8 @@ export default function DashboardPage() {
   const deltaMin =
     detectedMin !== null ? detectedMin - actualMin : null;
   const deltaSign = deltaMin !== null && deltaMin > 0 ? '+' : '';
+
+
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans">
@@ -686,327 +700,335 @@ export default function DashboardPage() {
                     </span>
                   )}
                 </span>
+                {/* Replay toggle button */}
+                <button
+                  onClick={() => setBeaconReplayMode((prev) => !prev)}
+                  className={`ml-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-colors duration-75 ${
+                    beaconReplayMode
+                      ? 'bg-cyan-500/15 text-cyan-300 border border-cyan-500/40 hover:bg-cyan-500/25'
+                      : 'bg-zinc-800 text-zinc-300 border border-zinc-700/60 hover:bg-zinc-700 hover:text-white'
+                  }`}
+                  title={beaconReplayMode ? 'Exit Replay Mode' : 'Watch beacon events appear live'}
+                >
+                  <Play className="w-3 h-3" />
+                  {beaconReplayMode ? 'Exit Replay' : 'Replay'}
+                </button>
               </div>
             </div>
 
-            {/* Scatter Chart */}
-            <div className="w-full h-[650px] pt-4">
-              <ResponsiveContainer width="100%" height="100%">
-                <ScatterChart
-                  margin={{ top: 20, right: 30, bottom: 30, left: 30 }}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    stroke="#27272a"
-                    horizontal={true}
-                    vertical={false}
-                  />
-                  
-                  {/* Time X-Axis */}
-                  <XAxis
-                    type="number"
-                    dataKey="x"
-                    name="Time"
-                    domain={[0, totalDurationMs]}
-                    tickFormatter={formatTimeMinutes}
-                    stroke="#71717a"
-                    tick={{ fill: '#a1a1aa', fontSize: 12 }}
-                    unit=""
-                  />
-
-                  {/* Host Y-Axis (20 rows) */}
-                  <YAxis
-                    type="number"
-                    dataKey="y"
-                    name="Host"
-                    domain={[-0.5, 19.5]}
-                    ticks={Array.from({ length: 20 }, (_, i) => i)}
-                    tickFormatter={(val) => yToHost[val] ?? ''}
-                    stroke="#71717a"
-                    tick={{ fill: '#a1a1aa', fontSize: 12, fontWeight: 500 }}
-                    interval={0}
-                    width={75}
-                  />
-
-                  <ZAxis type="number" range={[20, 20]} />
-
-                  {/* Custom Tooltip */}
-                  <Tooltip
-                    cursor={{ strokeDasharray: '3 3', stroke: '#52525b' }}
-                    content={({ payload }) => {
-                      if (!payload || payload.length === 0) return null;
-                      const p = payload[0].payload;
-                      const cat = data.hostCategories[p.hostId] || 'plainBenign';
-                      return (
-                        <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-700 text-zinc-100 text-xs shadow-xl space-y-1">
-                          <div className="font-bold text-sm text-zinc-100">{p.hostId}</div>
-                          <div className="text-zinc-400">
-                            Category:{' '}
-                            <span className="font-semibold text-zinc-200 capitalize">
-                              {cat === 'compromised'
-                                ? 'Compromised (C2)'
-                                : cat === 'benignRegular'
-                                ? 'Benign-Regular (Trap)'
-                                : cat === 'benignBursty'
-                                ? 'Benign-Bursty'
-                                : 'Plain Benign'}
-                            </span>
+            {/* ── STATIC Scatter Chart (always rendered, default view) ── */}
+            {!beaconReplayMode && (
+              <div className="w-full h-[650px] pt-4">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ScatterChart
+                    margin={{ top: 20, right: 30, bottom: 30, left: 30 }}
+                  >
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="#27272a"
+                      horizontal={true}
+                      vertical={false}
+                    />
+                    <XAxis
+                      type="number"
+                      dataKey="x"
+                      name="Time"
+                      domain={[0, totalDurationMs]}
+                      tickFormatter={formatTimeMinutes}
+                      stroke="#71717a"
+                      tick={{ fill: '#a1a1aa', fontSize: 12 }}
+                      unit=""
+                    />
+                    <YAxis
+                      type="number"
+                      dataKey="y"
+                      name="Host"
+                      domain={[-0.5, 19.5]}
+                      ticks={Array.from({ length: 20 }, (_, i) => i)}
+                      tickFormatter={(val) => yToHost[val] ?? ''}
+                      stroke="#71717a"
+                      tick={{ fill: '#a1a1aa', fontSize: 12, fontWeight: 500 }}
+                      interval={0}
+                      width={75}
+                    />
+                    <ZAxis type="number" range={[20, 20]} />
+                    <Tooltip
+                      cursor={{ strokeDasharray: '3 3', stroke: '#52525b' }}
+                      content={({ payload }) => {
+                        if (!payload || payload.length === 0) return null;
+                        const p = payload[0].payload;
+                        const cat = data.hostCategories[p.hostId] || 'plainBenign';
+                        return (
+                          <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-700 text-zinc-100 text-xs shadow-xl space-y-1">
+                            <div className="font-bold text-sm text-zinc-100">{p.hostId}</div>
+                            <div className="text-zinc-400">
+                              Category:{' '}
+                              <span className="font-semibold text-zinc-200 capitalize">
+                                {cat === 'compromised' ? 'Compromised (C2)' : cat === 'benignRegular' ? 'Benign-Regular (Trap)' : cat === 'benignBursty' ? 'Benign-Bursty' : 'Plain Benign'}
+                              </span>
+                            </div>
+                            <div className="text-zinc-400">
+                              Timestamp: <span className="font-mono text-zinc-200">{p.timestampMs} ms</span> ({formatTimeMinutes(p.timestampMs)})
+                            </div>
+                            <div className="text-zinc-400">
+                              Phase:{' '}
+                              <span className={`font-semibold ${p.timestampMs < phase1EndMs ? 'text-amber-400' : 'text-purple-400'}`}>
+                                {p.timestampMs < phase1EndMs ? 'Phase 1 (Regular)' : 'Phase 2 (Coordinated / Jitter)'}
+                              </span>
+                            </div>
                           </div>
-                          <div className="text-zinc-400">
-                            Timestamp: <span className="font-mono text-zinc-200">{p.timestampMs} ms</span> ({formatTimeMinutes(p.timestampMs)})
-                          </div>
-                          <div className="text-zinc-400">
-                            Phase:{' '}
-                            <span
-                              className={`font-semibold ${
-                                p.timestampMs < phase1EndMs ? 'text-amber-400' : 'text-purple-400'
-                              }`}
-                            >
-                              {p.timestampMs < phase1EndMs ? 'Phase 1 (Regular)' : 'Phase 2 (Coordinated / Jitter)'}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    }}
-                  />
+                        );
+                      }}
+                    />
+                    <ReferenceLine
+                      x={phase1EndMs}
+                      stroke="#f59e0b"
+                      strokeDasharray="5 5"
+                      strokeWidth={2}
+                      label={{ value: 'Phase Transition (1h)', position: 'top', fill: '#fbbf24', fontSize: 12, fontWeight: 600 }}
+                    />
+                    <Scatter name="Compromised" data={compromisedData} fill="#ef4444" shape="circle" />
+                    <Scatter name="Benign-Regular" data={benignRegularData} fill="#f97316" shape="circle" />
+                    <Scatter name="Benign-Bursty" data={benignBurstyData} fill="#3b82f6" shape="circle" />
+                    <Scatter name="Plain Benign" data={plainBenignData} fill="#9ca3af" shape="circle" />
+                  </ScatterChart>
+                </ResponsiveContainer>
+              </div>
+            )}
 
-                  {/* Phase Transition Vertical Reference Line */}
-                  <ReferenceLine
-                    x={phase1EndMs}
-                    stroke="#f59e0b"
-                    strokeDasharray="5 5"
-                    strokeWidth={2}
-                    label={{
-                      value: 'Phase Transition (1h)',
-                      position: 'top',
-                      fill: '#fbbf24',
-                      fontSize: 12,
-                      fontWeight: 600,
-                    }}
-                  />
-
-                  {/* 4 Scatter Series with designated colors */}
-                  <Scatter
-                    name="Compromised"
-                    data={compromisedData}
-                    fill="#ef4444"
-                    shape="circle"
-                  />
-                  <Scatter
-                    name="Benign-Regular"
-                    data={benignRegularData}
-                    fill="#f97316"
-                    shape="circle"
-                  />
-                  <Scatter
-                    name="Benign-Bursty"
-                    data={benignBurstyData}
-                    fill="#3b82f6"
-                    shape="circle"
-                  />
-                  <Scatter
-                    name="Plain Benign"
-                    data={plainBenignData}
-                    fill="#9ca3af"
-                    shape="circle"
-                  />
-                </ScatterChart>
-              </ResponsiveContainer>
-            </div>
+            {/* ── REPLAY Canvas Chart (shown only in replay mode) ── */}
+            {beaconReplayMode && (
+              <BeaconTimelineReplay
+                events={data.events}
+                hostCategories={data.hostCategories}
+                totalDurationMs={totalDurationMs}
+                phase1EndMs={phase1EndMs}
+              />
+            )}
           </div>
         )}
 
         {/* ══ SECTION 2: DETECTION CONFIDENCE OVER TIME ══ */}
         {data && confidenceChartData.length > 0 && (
           <div id="confidence" className="scroll-mt-32 flex flex-col gap-3 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 p-6 shadow-xl">
-            {/* Title & Self-Detection Callout */}
+            {/* Title, Self-Detection Callout & Replay Toggle */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-zinc-800/60 pb-3">
-              <div>
-                <h2 className="text-base font-semibold text-zinc-100 tracking-tight flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-teal-400 shadow-sm shadow-teal-400/60" />
-                  Detection Confidence Over Time
-                </h2>
+              <div className="flex flex-col">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-base font-semibold text-zinc-100 tracking-tight flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-teal-400 shadow-sm shadow-teal-400/60" />
+                    Detection Confidence Over Time
+                  </h2>
+                </div>
                 <p className="text-xs text-zinc-500 mt-1">
                   Phase-1 and Phase-2 use independent scales (see axis labels) — raw values are unchanged from detection.
                 </p>
               </div>
 
-              {detectedMin !== null && (
-                <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/60 text-xs text-purple-200 shadow-sm self-start md:self-auto flex-shrink-0">
-                  <span className="w-2 h-2 rounded-full bg-purple-400 shadow-sm shadow-purple-400/60 flex-shrink-0" />
-                  <span>
-                    System self-detected the phase change at{' '}
-                    <strong className="font-mono text-purple-300 font-semibold">{detectedMin.toFixed(1)}m</strong> — actual transition was at{' '}
-                    <strong className="font-mono text-zinc-200 font-semibold">{actualMin.toFixed(1)}m</strong>{' '}
-                    {deltaMin !== null && (
-                      <>(delta: <strong className="font-mono text-purple-300 font-semibold">{deltaSign}{deltaMin.toFixed(1)}m</strong>).</>
-                    )}
-                  </span>
-                </div>
-              )}
+              <div className="flex flex-wrap items-center gap-3">
+                {detectedMin !== null && (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-950/40 border border-purple-800/60 text-xs text-purple-200 shadow-sm self-start md:self-auto flex-shrink-0">
+                    <span className="w-2 h-2 rounded-full bg-purple-400 shadow-sm shadow-purple-400/60 flex-shrink-0" />
+                    <span>
+                      System self-detected the phase change at{' '}
+                      <strong className="font-mono text-purple-300 font-semibold">{detectedMin.toFixed(1)}m</strong> — actual transition was at{' '}
+                      <strong className="font-mono text-zinc-200 font-semibold">{actualMin.toFixed(1)}m</strong>{' '}
+                      {deltaMin !== null && (
+                        <>(delta: <strong className="font-mono text-purple-300 font-semibold">{deltaSign}{deltaMin.toFixed(1)}m</strong>).</>
+                      )}
+                    </span>
+                  </div>
+                )}
+
+                {/* Replay toggle button */}
+                <button
+                  onClick={() => setConfReplayMode((prev) => !prev)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                    confReplayMode
+                      ? 'bg-teal-500/20 text-teal-300 border-teal-500/40 shadow-sm shadow-teal-500/20'
+                      : 'bg-zinc-800/80 text-zinc-300 border-zinc-700/60 hover:bg-zinc-700/80 hover:text-white'
+                  }`}
+                  title={confReplayMode ? 'Switch to static chart' : 'Start animated replay'}
+                >
+                  <Play className="w-3 h-3" />
+                  {confReplayMode ? 'Static View' : 'Replay'}
+                </button>
+              </div>
             </div>
 
-            {/* Line Chart */}
-            <div className="w-full h-[260px] pt-2">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={confidenceChartData}
-                  margin={{ top: 10, right: 65, bottom: 20, left: 15 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+            {/* Static Chart View (Default) */}
+            {!confReplayMode && (
+              <div className="w-full h-[260px] pt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                    data={confidenceChartData}
+                    margin={{ top: 10, right: 65, bottom: 20, left: 15 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
 
-                  <XAxis
-                    type="number"
-                    dataKey="timestampMs"
-                    domain={[0, totalDurationMs]}
-                    scale="linear"
-                    tickFormatter={formatTimeMinutes}
-                    stroke="#71717a"
-                    tick={{ fill: '#a1a1aa', fontSize: 12 }}
-                  />
+                    <XAxis
+                      type="number"
+                      dataKey="timestampMs"
+                      domain={[0, totalDurationMs]}
+                      scale="linear"
+                      tickFormatter={formatTimeMinutes}
+                      stroke="#71717a"
+                      tick={{ fill: '#a1a1aa', fontSize: 12 }}
+                    />
 
-                  {/* Left axis — Phase-1 Regularity, fixed [0, 1] */}
-                  <YAxis
-                    yAxisId="left"
-                    orientation="left"
-                    domain={[0, 1]}
-                    stroke="#f97316"
-                    tick={{ fill: '#fdba74', fontSize: 11 }}
-                    tickFormatter={(v: number) => v.toFixed(1)}
-                    label={{
-                      value: 'Phase-1 Regularity',
-                      angle: -90,
-                      position: 'insideLeft',
-                      fill: '#f97316',
-                      fontSize: 11,
-                      dy: 50,
-                    }}
-                    width={45}
-                  />
+                    {/* Left axis — Phase-1 Regularity, fixed [0, 1] */}
+                    <YAxis
+                      yAxisId="left"
+                      orientation="left"
+                      domain={[0, 1]}
+                      stroke="#f97316"
+                      tick={{ fill: '#fdba74', fontSize: 11 }}
+                      tickFormatter={(v: number) => v.toFixed(1)}
+                      label={{
+                        value: 'Phase-1 Regularity',
+                        angle: -90,
+                        position: 'insideLeft',
+                        fill: '#f97316',
+                        fontSize: 11,
+                        dy: 50,
+                      }}
+                      width={45}
+                    />
 
-                  {/* Right axis — Phase-2 Correlation, auto-scale */}
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    domain={[0, 'auto']}
-                    stroke="#2dd4bf"
-                    tick={{ fill: '#5eead4', fontSize: 11 }}
-                    tickFormatter={(v: number) => v.toFixed(3)}
-                    label={{
-                      value: 'Phase-2 Correlation',
-                      angle: 90,
-                      position: 'insideRight',
-                      fill: '#2dd4bf',
-                      fontSize: 11,
-                      dy: 50,
-                    }}
-                    width={55}
-                  />
+                    {/* Right axis — Phase-2 Correlation, auto-scale */}
+                    <YAxis
+                      yAxisId="right"
+                      orientation="right"
+                      domain={[0, 'auto']}
+                      stroke="#2dd4bf"
+                      tick={{ fill: '#5eead4', fontSize: 11 }}
+                      tickFormatter={(v: number) => v.toFixed(3)}
+                      label={{
+                        value: 'Phase-2 Correlation',
+                        angle: 90,
+                        position: 'insideRight',
+                        fill: '#2dd4bf',
+                        fontSize: 11,
+                        dy: 50,
+                      }}
+                      width={55}
+                    />
 
-                  <Tooltip
-                    content={({ payload, label }) => {
-                      if (!payload || payload.length === 0) return null;
-                      return (
-                        <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-700 text-xs shadow-xl space-y-1">
-                          <div className="text-zinc-400 font-medium">
-                            {formatTimeMinutes(label as number)}
-                          </div>
-                          {payload.map((entry) => (
-                            <div
-                              key={entry.dataKey as string}
-                              className="flex items-center gap-2"
-                              style={{ color: entry.color }}
-                            >
-                              <span
-                                className="w-2 h-2 rounded-full flex-shrink-0"
-                                style={{ background: entry.color as string }}
-                              />
-                              <span className="text-zinc-300">
-                                {entry.name}:{' '}
-                                <span className="font-mono font-semibold">
-                                  {typeof entry.value === 'number'
-                                    ? entry.value.toFixed(4)
-                                    : '—'}
-                                </span>
-                              </span>
+                    <Tooltip
+                      content={({ payload, label }) => {
+                        if (!payload || payload.length === 0) return null;
+                        return (
+                          <div className="p-3 rounded-lg bg-zinc-900 border border-zinc-700 text-xs shadow-xl space-y-1">
+                            <div className="text-zinc-400 font-medium">
+                              {formatTimeMinutes(label as number)}
                             </div>
-                          ))}
-                        </div>
-                      );
-                    }}
-                  />
+                            {payload.map((entry) => (
+                              <div
+                                key={entry.dataKey as string}
+                                className="flex items-center gap-2"
+                                style={{ color: entry.color }}
+                              >
+                                <span
+                                  className="w-2 h-2 rounded-full flex-shrink-0"
+                                  style={{ background: entry.color as string }}
+                                />
+                                <span className="text-zinc-300">
+                                  {entry.name}:{' '}
+                                  <span className="font-mono font-semibold">
+                                    {typeof entry.value === 'number'
+                                      ? entry.value.toFixed(4)
+                                      : '—'}
+                                  </span>
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }}
+                    />
 
-                  <Legend
-                    verticalAlign="top"
-                    align="right"
-                    wrapperStyle={{ fontSize: '12px', paddingBottom: '8px' }}
-                    formatter={(value) => (
-                      <span style={{ color: '#a1a1aa' }}>{value}</span>
-                    )}
-                  />
+                    <Legend
+                      verticalAlign="top"
+                      align="right"
+                      wrapperStyle={{ fontSize: '12px', paddingBottom: '8px' }}
+                      formatter={(value) => (
+                        <span style={{ color: '#a1a1aa' }}>{value}</span>
+                      )}
+                    />
 
-                  {/* Ground-truth Phase transition reference line (amber dashed) */}
-                  <ReferenceLine
-                    yAxisId="left"
-                    x={actualTransitionMs}
-                    stroke="#f59e0b"
-                    strokeDasharray="5 5"
-                    strokeWidth={2}
-                    label={{
-                      value: 'Phase Transition',
-                      position: 'insideTopRight',
-                      fill: '#fbbf24',
-                      fontSize: 11,
-                      fontWeight: 600,
-                    }}
-                  />
-
-                  {/* Self-detected Phase transition reference line (dotted violet/magenta) */}
-                  {detectedTransitionMs !== null && (
+                    {/* Ground-truth Phase transition reference line (amber dashed) */}
                     <ReferenceLine
                       yAxisId="left"
-                      x={detectedTransitionMs}
-                      stroke="#c084fc"
-                      strokeDasharray="2 3"
+                      x={actualTransitionMs}
+                      stroke="#f59e0b"
+                      strokeDasharray="5 5"
                       strokeWidth={2}
                       label={{
-                        value: 'Self-Detected',
-                        position: 'insideBottomLeft',
-                        fill: '#d8b4fe',
+                        value: 'Phase Transition',
+                        position: 'insideTopRight',
+                        fill: '#fbbf24',
                         fontSize: 11,
                         fontWeight: 600,
                       }}
                     />
-                  )}
 
-                  {/* Phase-1 regularity signal — orange, left axis */}
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="phase1Avg"
-                    name="Phase-1 Signal (regularity)"
-                    stroke="#f97316"
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4, strokeWidth: 0 }}
-                    connectNulls
-                  />
+                    {/* Self-detected Phase transition reference line (dotted violet/magenta) */}
+                    {detectedTransitionMs !== null && (
+                      <ReferenceLine
+                        yAxisId="left"
+                        x={detectedTransitionMs}
+                        stroke="#c084fc"
+                        strokeDasharray="2 3"
+                        strokeWidth={2}
+                        label={{
+                          value: 'Self-Detected',
+                          position: 'insideBottomLeft',
+                          fill: '#d8b4fe',
+                          fontSize: 11,
+                          fontWeight: 600,
+                        }}
+                      />
+                    )}
 
-                  {/* Phase-2 correlation signal — teal, right axis */}
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="phase2Avg"
-                    name="Phase-2 Signal (correlation)"
-                    stroke="#2dd4bf"
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4, strokeWidth: 0 }}
-                    connectNulls
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
+                    {/* Phase-1 regularity signal — orange, left axis */}
+                    <Line
+                      yAxisId="left"
+                      type="monotone"
+                      dataKey="phase1Avg"
+                      name="Phase-1 Signal (regularity)"
+                      stroke="#f97316"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4, strokeWidth: 0 }}
+                      connectNulls
+                    />
+
+                    {/* Phase-2 correlation signal — teal, right axis */}
+                    <Line
+                      yAxisId="right"
+                      type="monotone"
+                      dataKey="phase2Avg"
+                      name="Phase-2 Signal (correlation)"
+                      stroke="#2dd4bf"
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 4, strokeWidth: 0 }}
+                      connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {/* Replay Chart View */}
+            {confReplayMode && (
+              <ConfidenceReplay
+                confidenceChartData={confidenceChartData}
+                totalDurationMs={totalDurationMs}
+                actualTransitionMs={actualTransitionMs}
+                detectedTransitionMs={detectedTransitionMs}
+              />
+            )}
           </div>
         )}
 
