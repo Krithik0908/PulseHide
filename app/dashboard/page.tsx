@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Image from 'next/image';
 import {
   ResponsiveContainer,
@@ -19,6 +19,7 @@ import {
 import { Play, RefreshCw, ShieldAlert, ShieldCheck, ArrowLeft } from 'lucide-react';
 import KineticMatrix from '@/components/ui/kinetic-matrix';
 import { BeaconTimelineReplay, ConfidenceReplay } from '@/components/dashboard/ReplayViews';
+import { ScoreCell } from '@/components/dashboard/ScoreCell';
 
 interface BeaconEvent {
   hostId: string;
@@ -113,6 +114,48 @@ export default function DashboardPage() {
     setBeaconReplayMode(false);
     setConfReplayMode(false);
   }, [data]);
+
+  // ── TABLE COUNT-UP: scroll-triggered, once per scenario run ───────────────
+  // true = IntersectionObserver has fired for the current data set.
+  const [tableAnimTriggered, setTableAnimTriggered] = useState(false);
+  const tableContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Reset triggered flag whenever genuinely new data arrives.
+  useEffect(() => {
+    setTableAnimTriggered(false);
+  }, [data]);
+
+  // Set up a one-shot IntersectionObserver on the results table container.
+  useEffect(() => {
+    if (!data) return;
+    const el = tableContainerRef.current;
+    if (!el) return;
+
+    // Already triggered for this data set — no new observer needed.
+    if (tableAnimTriggered) return;
+
+    let observer: IntersectionObserver | null = null;
+    // 300ms layout delay ensures SVG charts above have expanded before initial visibility check
+    const timer = setTimeout(() => {
+      observer = new IntersectionObserver(
+        (entries) => {
+          const entry = entries[0];
+          if (entry.isIntersecting) {
+            setTableAnimTriggered(true);
+            observer?.disconnect(); // one-shot: stop watching immediately
+          }
+        },
+        { threshold: 0.15 } // 15% visibility threshold for tall table
+      );
+
+      observer.observe(el);
+    }, 300);
+
+    return () => {
+      clearTimeout(timer);
+      observer?.disconnect();
+    };
+  }, [data, tableAnimTriggered]);
 
   useEffect(() => {
     if (!data) return;
@@ -1109,7 +1152,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Table */}
-            <div className="overflow-x-auto rounded-xl border border-zinc-800">
+            <div ref={tableContainerRef} className="overflow-x-auto rounded-xl border border-zinc-800">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-zinc-950/80 border-b border-zinc-800 text-zinc-400 font-semibold uppercase tracking-wider text-[11px]">
@@ -1141,7 +1184,16 @@ export default function DashboardPage() {
                       return b.fusedScore - a.fusedScore;
                     });
 
-                    return sorted.map((row) => {
+                    // Stable runId — changes only when genuinely new data arrives.
+                    // Built from a fingerprint of the first result row's scores.
+                    // animKey is non-empty only after the IntersectionObserver fires.
+                    // Empty string = show final values instantly, no animation yet.
+                    const runId = sorted.length > 0
+                      ? `${sorted[0].fusedScore.toFixed(6)}-${sorted[0].phase1Score.toFixed(6)}-${sorted.length}`
+                      : 'empty';
+                    const animKey = tableAnimTriggered ? runId : '';
+
+                    return sorted.map((row, rowIndex) => {
                       const category = data.hostCategories[row.hostId] || 'plainBenign';
                       return (
                         <tr
@@ -1174,13 +1226,13 @@ export default function DashboardPage() {
                             )}
                           </td>
                           <td className="py-2.5 px-4 text-right font-mono text-zinc-300">
-                            {row.phase1Score.toFixed(4)}
+                            <ScoreCell value={row.phase1Score} animKey={animKey} rowIndex={rowIndex} />
                           </td>
                           <td className="py-2.5 px-4 text-right font-mono text-zinc-300">
-                            {row.phase2Score.toFixed(4)}
+                            <ScoreCell value={row.phase2Score} animKey={animKey} rowIndex={rowIndex} />
                           </td>
                           <td className="py-2.5 px-4 text-right font-mono font-bold text-zinc-100">
-                            {row.fusedScore.toFixed(4)}
+                            <ScoreCell value={row.fusedScore} animKey={animKey} rowIndex={rowIndex} />
                           </td>
                           <td className="py-2.5 px-4 text-center">
                             {row.contained ? (
