@@ -367,23 +367,6 @@ npm run verify
 | `phase2JitterMinMs`                                                    |            `20,000` (20s) | Minimum Phase 2 background jitter      |
 | `phase2JitterMaxMs`                                                    |          `180,000` (180s) | Maximum Phase 2 background jitter      |
 
----
-
-## 📸 Screenshots
-
-### Beacon Timeline — Per-Host Scatter Visualization
-
-[Beacon Timeline](https://claude.ai/chat/screenshots/beacon-timeline.png)
-
-### Detection Confidence Over Time — Dual Y-Axis Line Chart with Self-Detected Transition
-
-[Detection Confidence Over Time](https://claude.ai/chat/screenshots/confidence-chart.png)
-
-### Containment Results Table & Evaluation Metrics
-
-[Containment Results](https://claude.ai/chat/screenshots/results-table.png)
-
----
 
 ## 🔭 Known Scope & Future Work
 
