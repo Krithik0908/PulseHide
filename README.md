@@ -36,6 +36,12 @@ PulseHide/
 └── tailwind.config.ts            # Styling & UI tokens
 ```
 
+## 🏗️ System Architecture
+
+![PulseHide Architecture](./public/Architecture/architecture.png)
+
+*High-level architecture of the PulseHide simulation, detection, evaluation, persistence, and dashboard pipeline.*
+
 ---
 
 ## 🔬 Threat Simulation Engine (`lib/simulator.ts`)
